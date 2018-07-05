@@ -459,7 +459,7 @@ def copyExtensionFiles():
 '''
 Copy Update Management Solution logs into /tmp/updatelogs
 '''
-def copyUpdateFiles(omsLinuxType):
+def copyUpdateFiles():
     cmd='mkdir -p /tmp/omslogs/updateMgmtlogs'
     out=execCommand(cmd)
     writeLogCommand(cmd)
@@ -472,10 +472,49 @@ def copyUpdateFiles(omsLinuxType):
     out=execCommand(cmd)
     writeLogCommand(cmd)
     
-    cmd='cp /etc/opt/microsoft/omsagent/run/automationworker/omsupdatemgmt.log /tmp/omslogs'
+    cmd='cp /var/opt/microsoft/omsagent/run/automationworker/omsupdatemgmt.log /tmp/omslogs/updateMgmtlogs'
+    out=execCommand(cmd)
+    writeLogCommand(cmd)
+
+    cmd='sudo find /var/opt/microsoft/ -name worker.log -exec cp -n {} /tmp/omslogs/updateMgmtlogs \;'
     out=execCommand(cmd)
     writeLogCommand(cmd)
     return 0
+
+'''
+Return the package manager on the system
+'''
+
+def GetPackageManager():
+    ret = None
+    # choose default - almost surely one will match.
+    for b in ('apt-get', 'zypper', 'yum'):
+        code = execCommand2('which ' + b)
+        if code is 0:
+            ret = b
+            if ret == 'apt-get':
+                ret = 'apt'
+            break
+    return ret
+
+'''
+obtain the current Available updates on the system
+'''
+
+
+def GetUpdates():
+    mgr = GetPackageManager()
+    if mgr == None:
+        print("Unable to find one of 'apt', 'yum', or 'zypper'.")
+        return -1, d
+    if mgr == 'apt':
+        cmd = 'LANG=en_US.UTF8 apt-get -s dist-upgrade | grep "^Inst"'
+    elif mgr == 'yum':
+        cmd = 'sudo yum check-update '
+    elif mgr == 'zypper':
+        cmd = 'zypper -q lu'
+    return cmd
+
 
 '''
 Remove temporary files under /tmp/omslogs once it is archived
@@ -640,6 +679,18 @@ def execCommand2(cmd):
     except subprocess.CalledProcessError as e:
         print(e.returncode)
         return (e.returncode)
+
+'''
+Common logic to run any command and get always output irrespective of return code
+'''
+def execCommand_always_output(cmd):
+    try:
+        out = subprocess.check_output(cmd, shell=True)
+        return out
+    except subprocess.CalledProcessError as e:
+        print(e.returncode)
+        return e.output
+
 
 '''
 Common logic to save command outputs into /tmp/omslogs/omslinux.out
@@ -814,6 +865,7 @@ try:
           copyCommonFiles(linuxType)
           copyExtensionFiles()
           runExtensionCommands()
+          copyUpdateFiles()
        else:
           sys.exit(1)
     elif(omsInstallType == 2):
@@ -822,6 +874,7 @@ try:
        tmpSpace=chkDiskFreeSpace(estSize, 0, cmdSize)
        if(tmpSpace == 0):
           copyCommonFiles(linuxType)
+          copyUpdateFiles()
        else:
           sys.exit(1)
     elif(omsInstallType == 3):
@@ -908,7 +961,17 @@ try:
     out=execCommand(cmd)
     writeLogCommand(cmd)
     writeLogOutput(out)
-        
+
+    '''
+    Run Update Assessment diagnostics commands
+    '''
+    print("Starting to check Available Updates")
+    cmd=GetUpdates()
+    out=execCommand_always_output(cmd)
+    writeLogCommand(cmd)
+    writeLogOutput(out)
+    print("Completed checking Available Updates")
+
     '''
     Logic to capture IOError or OSError in above logic
     '''
@@ -933,4 +996,4 @@ finally:
     compressOMSLog(outDir, compressFile)
     removeTempFiles()
     print('OMS Linux Agent Log is archived in file : %s' % (compressFile))
-    sys.exit()    
+    sys.exit()
